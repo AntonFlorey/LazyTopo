@@ -7,6 +7,8 @@ from gpu_extras.batch import batch_for_shader
 _drawing_handle_crossfield = None
 _drawing_handle_crossfield_graph = None
 _drawing_handle_crossfield_hierarchy = None
+_drawing_handle_singularities = None
+_drawing_handle_debug = None
 
 class ColorGenerator():
     """ A simple color generator"""
@@ -111,6 +113,58 @@ def hierarchy_draw_callback(vertex_positions, triangle_indices):
         batch = batch_for_shader(shader, 'TRIS', {"pos": vertex_positions}, indices=curr_indices)
         shader.uniform_float("color", color_generator.next_color())
         batch.draw(shader)
+
+    # restore opengl defaults
+    gpu.state.depth_mask_set(False)
+
+def hide_singularities():
+    global _drawing_handle_singularities
+    if _drawing_handle_singularities is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_drawing_handle_singularities, 'WINDOW')
+        bpy.ops.wm.redraw_timer() # Until I find a better way of refreshing the screen
+        _drawing_handle_singularities = None
+
+def show_singularities(singularities):
+    global _drawing_handle_singularities
+    hide_singularities() # remove old drawing 
+    _drawing_handle_singularities = bpy.types.SpaceView3D.draw_handler_add(singularities_draw_callback, (singularities,), "WINDOW", "POST_VIEW")
+    bpy.ops.wm.redraw_timer() # Until I find a better way of refreshing the screen
+
+def singularities_draw_callback(singularities):
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    gpu.state.depth_test_set('LESS_EQUAL')
+    gpu.state.depth_mask_set(True)
+ 
+    color_generator = ColorGenerator()
+    for index, singularities_pos in singularities.items():
+        batch = batch_for_shader(shader, "POINTS", {"pos" : singularities_pos})
+        shader.uniform_float("color", color_generator.next_color())
+        batch.draw(shader)
+
+    # restore opengl defaults
+    gpu.state.depth_mask_set(False)
+
+def hide_debug():
+    global _drawing_handle_debug
+    if _drawing_handle_debug is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_drawing_handle_debug, 'WINDOW')
+        bpy.ops.wm.redraw_timer() # Until I find a better way of refreshing the screen
+        _drawing_handle_debug = None
+
+def show_debug(debug_points):
+    global _drawing_handle_debug
+    hide_debug() # remove old drawing 
+    _drawing_handle_debug = bpy.types.SpaceView3D.draw_handler_add(debug_point_draw_callback, (debug_points,), "WINDOW", "POST_VIEW")
+    bpy.ops.wm.redraw_timer() # Until I find a better way of refreshing the screen
+
+def debug_point_draw_callback(debug_points):
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    gpu.state.depth_test_set('LESS_EQUAL')
+    gpu.state.depth_mask_set(True)
+    
+    batch = batch_for_shader(shader, "POINTS", {"pos" : debug_points})
+    shader.uniform_float("color", (204 / 255,   7 / 255,  30 / 255, 1))
+    batch.draw(shader)
 
     # restore opengl defaults
     gpu.state.depth_mask_set(False)

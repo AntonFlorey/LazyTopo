@@ -26,6 +26,11 @@ class MySettings(bpy.types.PropertyGroup):
         name="Show Crossfield Graph",
         default=True
     )
+
+    show_singularities: bpy.props.BoolProperty(
+        name="Show Crossfield Singularities",
+        default=True
+    )
     
     color_crossfield_hierarchy : bpy.props.BoolProperty(
         name="Show Crossfield  Hierarchy",

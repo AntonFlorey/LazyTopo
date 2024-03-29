@@ -7,7 +7,7 @@ import mathutils
 from mathutils import Vector, Matrix, Quaternion
 import bl_math
 import time
-from .drawing import show_crossfield
+from .drawing import show_debug, hide_debug
 
 
 class MultiResCrossField():
@@ -89,7 +89,6 @@ class MultiResCrossField():
         # singularities
         self.singularities = []
         self.calculate_singularities()
-        print(self.singularities)
 
     def optimize(self, convergence_eps=1e-2, max_iterations=100):
         # optimize bottom up
@@ -114,11 +113,16 @@ class MultiResCrossField():
             unordered_face_ring = vertex.link_faces
             face_ring = [unordered_face_ring[0]]
             # select one neighbour
-            second_face_candidates = [f for e in face_ring[0].edges for f in e.link_faces if f in unordered_face_ring and f != face_ring[0]]  
+            second_face_candidates = [f for e in face_ring[0].edges for f in e.link_faces if (f in unordered_face_ring) and (f != face_ring[0])]  
             face_ring.append(second_face_candidates[0])
             while face_ring[0] != face_ring[-1]:
                 curr_face = face_ring[-1]
-                next_face = [f for e in curr_face.edges for f in e.link_faces if f != curr_face and f != face_ring[-2] and f in unordered_face_ring][0]
+                next_face_c = [f for e in curr_face.edges for f in e.link_faces if (f != curr_face) and (f != face_ring[-2]) and (f in unordered_face_ring)]
+                if len(next_face_c) == 0:
+                    # handle special case
+                    face_ring.append(face_ring[0])
+                    continue
+                next_face = next_face_c[0]
                 face_ring.append(next_face)    
 
             # sum up indices while traversing the face ring
@@ -131,12 +135,10 @@ class MultiResCrossField():
                                                  self.fields[0].crossdirs[faceB],
                                                  self.fields[0].normals[faceB])
                 index += iB - iA
-                print(index)
 
             index = index % 4 # 4 directional symmetry
             if index == 1 or index == 3 or index == 2:
                 self.singularities.append((vertex, index))
-
 
     def cross_points_for_rendering(self, level=0):
         if level < 0 or level >= len(self.fields):
@@ -152,6 +154,14 @@ class MultiResCrossField():
         if level < 0 or level >= len(self.fields):
             return self.fields[0].batch_ready_tris_for_coloring(self.mesh, self.world_matrix)
         return self.fields[level].batch_ready_tris_for_coloring(self.mesh, self.world_matrix)
+
+    def singularity_points_for_rendering(self):
+        sing_points = {}
+        for sing in self.singularities:
+            coord = tuple(self.world_matrix @ sing[0].co)
+            index = sing[1]
+            sing_points.setdefault(index, []).append(coord)
+        return sing_points
 
 class CrossField():
     """ Internal Cross Field data structure """
@@ -214,7 +224,7 @@ class CrossField():
                 center += vert.co
             center /= len(face.verts)
             self.centers[face.index] = center
-            
+
     def batch_ready_lines_for_crosses(self, final_transform_matrix):
         line_coords = []
         for cross_id in self.graph.keys():

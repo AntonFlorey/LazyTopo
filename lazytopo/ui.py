@@ -32,6 +32,8 @@ class SubPanel(bpy.types.Panel):
         row = layout.row()
         row.prop(topo_settings, "my_bool")
         row = layout.row()
+        row.prop(topo_settings, "show_singularities")
+        row = layout.row()
         row.prop(topo_settings, "show_crossfield_graph")
         row = layout.row()
         row.prop(topo_settings, "color_crossfield_hierarchy")

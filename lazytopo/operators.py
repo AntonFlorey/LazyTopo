@@ -2,7 +2,7 @@ import bpy
 import bmesh
 from bpy.types import Context
 from .crossfield import CrossField, MultiResCrossField
-from .drawing import show_crossfield, hide_crossfield, show_crossfield_graph, hide_crossfield_graph, show_hierarchy, hide_hierarchy
+from .drawing import show_crossfield, hide_crossfield, show_crossfield_graph, hide_crossfield_graph, show_hierarchy, hide_hierarchy, show_singularities, hide_singularities
 
 
 class TestOperator(bpy.types.Operator):
@@ -18,6 +18,7 @@ class TestOperator(bpy.types.Operator):
         hide_crossfield()
         hide_crossfield_graph()
         hide_hierarchy()
+        hide_singularities()
         return {'FINISHED'}
     
     def invoke(self, context, event):
@@ -35,6 +36,9 @@ class TestOperator(bpy.types.Operator):
         if topo_settings.show_crossfield_graph:
             show_crossfield_graph(self.my_mr_crossfield.graph_points_for_rendering(level=topo_settings.crossfield_level_shown))
 
+        if topo_settings.show_singularities:
+            show_singularities(self.my_mr_crossfield.singularity_points_for_rendering())
+        
         if topo_settings.color_crossfield_hierarchy:
             show_hierarchy(*self.my_mr_crossfield.merged_faces_for_rendering(level=topo_settings.crossfield_level_shown))
 
@@ -52,6 +56,7 @@ class TestOperator(bpy.types.Operator):
         hide_crossfield()
         hide_crossfield_graph()
         hide_hierarchy()
+        hide_singularities()
 
 class SubOperator(bpy.types.Operator):
     bl_label = "Sub-Operator"
