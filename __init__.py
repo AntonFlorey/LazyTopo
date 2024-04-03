@@ -16,12 +16,15 @@ if "bpy" in locals():
     importlib.reload(locals()["properties"])
 else:
     import bpy
+    from .lazytopo import topo_globals
     from .lazytopo import drawing
     from .lazytopo import ui
     from .lazytopo import operators
     from .lazytopo import properties
 
 def register():
+    # Init globals
+    topo_globals.init()
     # Properties first!
     properties.register()
     # Other stuff later

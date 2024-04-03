@@ -7,7 +7,7 @@ import mathutils
 from mathutils import Vector, Matrix, Quaternion
 import bl_math
 import time
-from .drawing import show_debug, hide_debug
+from .geometry import principal_curvature_dir_with_score
 
 
 class MultiResCrossField():
@@ -26,6 +26,13 @@ class MultiResCrossField():
         self.mr_ref_to_lower_res = []
         self.mr_ref_to_higher_res = []
         
+        # constraints stored in lists
+        self.curvature_constraints = {}
+        self.user_constraints = {}
+        self.next_curvature_constraint_id = 0
+        self.next_user_constraint_id = 0
+        self.constraints_dirty = False
+
         # build the high-res crossfield
         high_res_crossfield = CrossField()
         high_res_crossfield.load_from_bmesh(self.mesh)
@@ -34,8 +41,9 @@ class MultiResCrossField():
         # construct multi-res hierarchy
         multires_hierarchy_timer_start = time.thread_time()
         layer = 1
+        early_stop = False
         max_faces_per_merged_blob = 2 # soft barrier
-        while layer < num_layers:
+        while (not early_stop) and (layer < num_layers):
             layer_merge_max = math.cos(math.radians(((num_layers-1 - layer) * 2 + (layer - 1) * max_merge_angle)) / (num_layers - 2))
             current_field : CrossField = copy.deepcopy(self.fields[-1])
             current_to_prev = {}
@@ -44,13 +52,14 @@ class MultiResCrossField():
                 current_to_prev[cross_id] = set([cross_id])
                 prev_to_current[cross_id] = cross_id
             # merge until max merge angle is reached
+            first_merge_attempt = True
             while True:
                 merge_candidates = []
                 for cross_id, nb_ids in current_field.graph.items():
                     for nb_id in nb_ids:
                         if nb_id < cross_id:
                             continue # visit each edge once
-                        if len(current_field.mesh_faces[cross_id]) > max_faces_per_merged_blob and len(current_field.mesh_faces[nb_id]) > max_faces_per_merged_blob:
+                        if len(current_field.mesh_faces[cross_id]) > max_faces_per_merged_blob: #and len(current_field.mesh_faces[nb_id]) > max_faces_per_merged_blob:
                             continue # dont merge
                         normal_dot = current_field.normals[cross_id].dot(current_field.normals[nb_id])
                         if normal_dot < layer_merge_max:
@@ -59,7 +68,10 @@ class MultiResCrossField():
                         merge_candidates.append(((cross_id, nb_id), merge_score))
                 # stop if no merge is available
                 if len(merge_candidates) == 0:
+                    if first_merge_attempt:
+                        early_stop = True
                     break
+                first_merge_attempt = False
                 # sort the merge candidates in descending order
                 merge_candidates_sorted = sorted(merge_candidates, key=lambda x: x[1], reverse=True)
                 # do the merge
@@ -74,6 +86,8 @@ class MultiResCrossField():
                 for small_cross_id in prev_to_current.keys():
                     prev_to_current[small_cross_id] = ref_to_lower_res[prev_to_current[small_cross_id]]
             
+            if early_stop:
+                continue # hierarchy done
             # add the current field to the hierarchy
             self.fields.append(current_field)
             self.mr_ref_to_higher_res.append(current_to_prev)
@@ -86,11 +100,16 @@ class MultiResCrossField():
         print("Number of layers: ", len(self.fields))
         print("Number of field reference dicts:", len(self.mr_ref_to_lower_res))
 
-        # singularities
+        self.compute_curvature_constraints()
+        self.optimize()
         self.singularities = []
         self.calculate_singularities()
 
     def optimize(self, convergence_eps=1e-2, max_iterations=100):
+        # Propagate constraints if necessary
+        if self.constraints_dirty:
+            self.propagate_constraints()
+
         # optimize bottom up
         for i in reversed(range(len(self.fields))):
             self.fields[i].optimize(convergence_eps, max_iterations)
@@ -125,20 +144,150 @@ class MultiResCrossField():
                 next_face = next_face_c[0]
                 face_ring.append(next_face)    
 
-            # sum up indices while traversing the face ring
-            index = 0
+            defekt = vertex_angle_defekt(vertex)
+            # sum up angles between crosses while traversing the face ring
+            angle = 0
+            extrinsic_index = 0
             for i in range(len(face_ring) - 1):
                 faceA = face_ring[i].index
                 faceB = face_ring[i+1].index
-                iA, iB = cross_alignment_indices(self.fields[0].crossdirs[faceA],
-                                                 self.fields[0].normals[faceA],
-                                                 self.fields[0].crossdirs[faceB],
-                                                 self.fields[0].normals[faceB])
-                index += iB - iA
+                # curr_angle = cross_angle_intrinsic(self.fields[0].crossdirs[faceA],
+                #                                    self.fields[0].normals[faceA],
+                #                                    self.fields[0].crossdirs[faceB],
+                #                                    self.fields[0].normals[faceB])
+                curr_ind_extrinsic = cross_alignment_indices(self.fields[0].crossdirs[faceA],
+                                                             self.fields[0].normals[faceA],
+                                                             self.fields[0].crossdirs[faceB],
+                                                             self.fields[0].normals[faceB])
+                extrinsic_index += curr_ind_extrinsic[1] -  curr_ind_extrinsic[0]
 
-            index = index % 4 # 4 directional symmetry
-            if index == 1 or index == 3 or index == 2:
-                self.singularities.append((vertex, index))
+            index = round(4 * (angle + defekt) / (2 * math.pi))
+
+            # if vertex.index == 2:
+            #     print("summed angles:", 4 * angle / (2 * math.pi))
+            #     print("angle defekt:", 4 * defekt / (2 * math.pi))
+            #     print("Index: ", index)
+            #     print("Extrinsic index:", extrinsic_index % 4)
+            #     self.singularities.append((vertex, index))
+
+            if extrinsic_index % 4 != 0 and extrinsic_index % 4 != 2:
+                # print("Extrinsic singularity detected!")
+                # print("Index:", extrinsic_index % 4)
+                self.singularities.append((vertex, extrinsic_index % 4))
+
+            # if index != 0:
+            #     print("summed angles:", angle / (2 * math.pi))
+            #     print("angle defekt:", defekt / (2 * math.pi))
+            #     print("Index: ", index)
+            #     self.singularities.append((vertex, index))
+
+    def compute_curvature_constraints(self, activation_threshold = 2.5, saturation_threshold = 10, max_weight = 1):
+        self.clear_curvature_constraints()
+        for face in self.mesh.faces:
+            _principal_dir, significance = principal_curvature_dir_with_score(face)
+            principal_dir = Vector(_principal_dir)
+            if significance < activation_threshold:
+                continue
+            if significance > saturation_threshold:
+                constraint_weight = max_weight
+            else:
+                constraint_weight = (significance - activation_threshold) * max_weight / (saturation_threshold - activation_threshold)
+            self.add_curvature_constraint(face, principal_dir, constraint_weight)
+
+    def propagate_constraints(self):
+        for i in range(1, len(self.fields)):
+            prev_layer_id = i-1
+            self.fields[i].clear_constraints()
+            for cross_index in self.fields[i].graph.keys():
+                weight_sum = 0
+                num_collected_constraints = 0
+                constraint_dir = Vector()
+                cross_normal = self.fields[i].normals[cross_index]
+                # collect all constraints of merged crosses
+                for higher_level_cross_id in self.mr_ref_to_higher_res[prev_layer_id][cross_index]:
+                    if higher_level_cross_id not in self.fields[prev_layer_id].constraints:
+                        continue
+                    for higher_level_constraint in self.fields[prev_layer_id].constraints[higher_level_cross_id].values():
+                        curr_dir = higher_level_constraint[0]
+                        curr_weight = higher_level_constraint[1]
+                        # project onto tangent plane
+                        proj_dir = curr_dir - cross_normal * cross_normal.dot(curr_dir)
+                        # if first constraint, just add
+                        if num_collected_constraints == 0:
+                            constraint_dir = proj_dir
+                        else:
+                            # make directions line up
+                            aligned_constraint_dir, aligned_curr_dir = align_crosses(constraint_dir, cross_normal, proj_dir, cross_normal)
+                            # new direction is a weighted sum
+                            constraint_dir = aligned_constraint_dir * weight_sum + aligned_curr_dir * curr_weight
+                        weight_sum += curr_weight
+                        num_collected_constraints += 1
+                if num_collected_constraints == 0:
+                    continue
+                # project and normalize directional constraint
+                constraint_dir -= cross_normal * cross_normal.dot(constraint_dir)
+                constraint_dir.normalize()
+                constraint_weight = weight_sum / num_collected_constraints
+                self.fields[i].add_constraint(cross_index, constraint_dir, constraint_weight)
+        self.constraints_dirty = False
+
+    def add_curvature_constraint(self, face : bmesh.types.BMFace, direction : Vector, weight):
+        if face.index in self.fields[0].graph:
+            added_id = self.fields[0].add_constraint(face.index, direction, weight)
+            self.curvature_constraints[self.next_curvature_constraint_id] = (face.index, added_id)
+            self.next_curvature_constraint_id += 1
+            self.constraints_dirty = True
+            return self.next_curvature_constraint_id - 1
+        else:
+            print("Warning! Tried to add a curvature constraint to a non existing face")
+            return -1
+
+    def del_curvature_constraint(self, constraint_id):
+        if constraint_id < 0 or constraint_id not in self.curvature_constraints:
+            return # invalid constraints 
+        else:
+            # delete constraint from top layer 
+            self.fields[0].del_constraint(*self.curvature_constraints[constraint_id])
+            # remove constraint 
+            self.curvature_constraints.pop(constraint_id)
+            self.constraints_dirty = True
+
+    def clear_curvature_constraints(self):
+        # remove all from the top hierarchy layer
+        for curvature_constraint in self.curvature_constraints.values():
+            self.fields[0].del_constraint(*curvature_constraint)
+        self.curvature_constraints = {}
+        self.next_curvature_constraint_id = 0
+        self.constraints_dirty = True
+
+    def add_user_constraint(self, face : bmesh.types.BMFace, direction : Vector, weight):
+        if face.index in self.fields[0].graph:
+            added_id = self.fields[0].add_constraint(face.index, direction, weight)
+            self.user_constraints[self.next_user_constraint_id] = (face.index, added_id)
+            self.next_user_constraint_id += 1
+            self.constraints_dirty = True
+            return self.next_user_constraint_id - 1
+        else:
+            print("Warning! Tried to add a user constraint to a non existing face")
+            return -1
+
+    def del_user_constraint(self, constraint_id):
+        if constraint_id < 0 or constraint_id not in self.user_constraints:
+            return # invalid constraints 
+        else:
+            # delete constraint from top layer 
+            self.fields[0].del_constraint(*self.user_constraints[constraint_id])
+            # remove constraint 
+            self.user_constraints.pop(constraint_id)
+            self.constraints_dirty = True
+
+    def clear_user_constraints(self):
+        # remove all from the top hierarchy layer
+        for curvature_constraint in self.user_constraints.values():
+            self.fields[0].del_constraint(*curvature_constraint)
+        self.user_constraints = {}
+        self.next_user_constraint_id = 0
+        self.constraints_dirty = True
 
     def cross_points_for_rendering(self, level=0):
         if level < 0 or level >= len(self.fields):
@@ -154,6 +303,11 @@ class MultiResCrossField():
         if level < 0 or level >= len(self.fields):
             return self.fields[0].batch_ready_tris_for_coloring(self.mesh, self.world_matrix)
         return self.fields[level].batch_ready_tris_for_coloring(self.mesh, self.world_matrix)
+
+    def constraint_crosses_for_rendering(self, level=0):
+        if level < 0 or level >= len(self.fields):
+            return self.fields[0].batch_ready_lines_for_constraints(self.world_matrix)
+        return self.fields[level].batch_ready_lines_for_constraints(self.world_matrix)
 
     def singularity_points_for_rendering(self):
         sing_points = {}
@@ -175,6 +329,8 @@ class CrossField():
         self.centers = {}
         self.areas = {}
         self.mesh_faces = {}
+        self.constraints = {} # can contain user imposed constraints to the field as well as constraints derived from curvature
+        self.next_constraint_id = 0 # store constraints by index for easy removal
 
     def optimize(self, convergence_eps=1e-3, max_iterations=100):
         start_time = time.thread_time()
@@ -191,7 +347,7 @@ class CrossField():
                 for nb_cross_id in nb_cross_ids:
                     n_j = self.normals[nb_cross_id]
                     cross_j = self.crossdirs[nb_cross_id]
-                    w_j = 1 # uniform weights for now
+                    w_j = 1.0 # uniform weights for now
                     # make orientations compatible
                     aligned_i, aligned_j = align_crosses(sum, n_i, cross_j, n_j)
                     # add direction of cross j to the sum
@@ -200,6 +356,19 @@ class CrossField():
                     sum -= n_i * n_i.dot(sum)
                     sum.normalize()
                     weight_sum += w_j
+
+                # iterate over constraints
+                if cross_id in self.constraints:
+                    for constraint_dir, constraint_w in self.constraints[cross_id].values():
+                        # make orientations compatible
+                        aligned_i, aligned_constraint = align_crosses(sum, n_i, constraint_dir, n_i)
+                        # add constraint direction to sum
+                        sum = weight_sum * aligned_i + constraint_w * aligned_constraint
+                        # project and normalize
+                        sum -= n_i * n_i.dot(sum)
+                        sum.normalize()
+                        weight_sum += constraint_w       
+
                 # measure cross direction change to check for convergence
                 aligned_old, aligned_new = align_crosses(self.crossdirs[cross_id], n_i, sum, n_i)
                 max_change = max(max_change, (aligned_old - aligned_new).length)
@@ -225,6 +394,21 @@ class CrossField():
             center /= len(face.verts)
             self.centers[face.index] = center
 
+    def add_constraint(self, cross_index, dir, weight):
+        self.constraints.setdefault(cross_index, dict())[self.next_constraint_id] = (dir, weight)
+        self.next_constraint_id += 1
+        return self.next_constraint_id - 1
+    
+    def del_constraint(self, cross_index, constr_id):
+        if cross_index in self.constraints and constr_id in self.constraints[cross_index]:
+            self.constraints[cross_index].pop(constr_id)
+        else:
+            print("Warning! Tried to delete non-existing constraint")
+
+    def clear_constraints(self):
+        self.constraints = {}
+        self.next_constraint_id = 0
+
     def batch_ready_lines_for_crosses(self, final_transform_matrix):
         line_coords = []
         for cross_id in self.graph.keys():
@@ -233,6 +417,43 @@ class CrossField():
 
             n : Vector = self.normals[cross_id]
             o : Vector = cross_size * self.crossdirs[cross_id]
+            R = Matrix.Rotation(math.radians(90), 4, n)
+
+            # create the cross
+            curr_vec = o
+            for _ in range(4):
+                line_coords.append(center)
+                line_coords.append(center + curr_vec)
+                curr_vec = R @ curr_vec
+
+        # transform to world space and make tuples
+        line_coords = [tuple(final_transform_matrix @ coord) for coord in line_coords]
+        return line_coords
+
+    def batch_ready_lines_for_constraints(self, final_transform_matrix):
+        line_coords = []
+        for cross_id, constraint_dict in self.constraints.items():
+            # take constraint average
+            dir = Vector()
+            summed_weights = 0
+            num_added = 0
+            n : Vector = self.normals[cross_id]
+            for constraint in constraint_dict.values():
+                curr_dir = constraint[0]
+                curr_w = constraint[1]
+                if num_added == 0:
+                    dir = curr_dir
+                else:
+                    aligned_dir, aligned_curr_dir = align_crosses(dir, n, curr_dir, n)
+                    dir = summed_weights * aligned_dir + curr_w * aligned_curr_dir
+                summed_weights += curr_w
+                num_added += 1
+                dir.normalize()
+            
+            center = self.centers[cross_id]
+            cross_size = math.sqrt(self.areas[cross_id]) / 3
+
+            o : Vector = cross_size * dir
             R = Matrix.Rotation(math.radians(90), 4, n)
 
             # create the cross
@@ -296,6 +517,42 @@ def align_crosses(cross_A : Vector, normal_A : Vector, cross_B : Vector, normal_
 
     return best_A, sign_B * best_B
 
+def rotate_cross_into_another_plane(cross_source : Vector, normal_source : Vector, normal_target : Vector):
+    rot_axis = normal_source.cross(normal_target)
+    rot_cos_angle = normal_source.dot(normal_target)
+    if rot_cos_angle < 0.9999:
+        return rot_cos_angle * cross_source + rot_axis.cross(cross_source) + ((1 - rot_cos_angle) / rot_axis.dot(rot_axis)) * rot_axis.dot(cross_source) * rot_axis
+    return cross_source
+
+def cross_angle_intrinsic(cross_A : Vector, normal_A : Vector, cross_B : Vector, normal_B : Vector):
+    cross_B_in_A = rotate_cross_into_another_plane(cross_B, normal_B, normal_A)
+    crossB90_in_A = normal_A.cross(cross_B_in_A)
+
+    dotAB = cross_A.dot(cross_B_in_A)
+    dotAB90 = cross_A.dot(crossB90_in_A)
+
+    if abs(dotAB) > abs(dotAB90):
+        alignedB = cross_B_in_A if dotAB > 0 else -cross_B_in_A
+    else:
+        alignedB = crossB90_in_A if dotAB90 > 0 else -crossB90_in_A
+
+    cos_angle = cross_A.dot(alignedB)
+    if cos_angle < 0.9999:
+        # compute signed angle
+        angle = math.acos(cos_angle)
+        sign = 1 if normal_A.dot(cross_A.cross(alignedB)) > 0 else -1
+        return sign * angle
+    return 0
+
+def cross_alignment_index_intrinsic(cross_A : Vector, normal_A : Vector, cross_B : Vector, normal_B : Vector):
+    cross_B_in_A = rotate_cross_into_another_plane(cross_B, normal_B, normal_A)
+    dotAB = cross_A.dot(cross_B_in_A)
+    dotA90B = (normal_A.cross(cross_A)).dot(cross_B_in_A)
+
+    if abs(dotAB) > abs(dotA90B):
+        return 0 if dotAB > 0 else 2
+    return 1 if dotA90B > 0 else 3
+
 def cross_alignment_indices(cross_A : Vector, normal_A : Vector, cross_B : Vector, normal_B : Vector):
     best_score = -math.inf
     best_A = 0
@@ -315,6 +572,23 @@ def cross_alignment_indices(cross_A : Vector, normal_A : Vector, cross_B : Vecto
         best_B += 2
 
     return best_A, best_B
+
+def vertex_angle_defekt(vertex : bmesh.types.BMVert):
+    incident_faces = vertex.link_faces
+    incident_edges = vertex.link_edges
+
+    defekt = 2 * math.pi
+    for f in incident_faces:
+        interesting_edges = [e for e in f.edges if e in incident_edges]
+        assert len(interesting_edges) == 2
+        # collect vertices
+        v0 = interesting_edges[0].verts[0] if interesting_edges[0].verts[0] != vertex else interesting_edges[0].verts[1]
+        v1 = interesting_edges[1].verts[0] if interesting_edges[1].verts[0] != vertex else interesting_edges[1].verts[1]
+
+        # print("Face", f.index, "has angle", math.acos((v0.co - vertex.co).dot(v1.co - vertex.co)))
+        defekt -= math.acos((v0.co - vertex.co).dot(v1.co - vertex.co))
+
+    return defekt
 
 def center_after_merge(centerA : Vector, normalA : Vector, centerB : Vector, normalB: Vector):
     """ Solve derivative of Lagrangian for 0 """

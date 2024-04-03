@@ -1,9 +1,9 @@
 import bpy
 import bmesh
 from bpy.types import Context
-from .crossfield import CrossField, MultiResCrossField
-from .drawing import show_crossfield, hide_crossfield, show_crossfield_graph, hide_crossfield_graph, show_hierarchy, hide_hierarchy, show_singularities, hide_singularities
-
+from . import crossfield
+from .drawing import *
+from . import topo_globals
 
 class TestOperator(bpy.types.Operator):
     bl_label = "Test Operator"
@@ -13,34 +13,14 @@ class TestOperator(bpy.types.Operator):
     my_float : bpy.props.FloatProperty(name="TestFloat")
     
     def execute(self, context):
-        print("This is a simple test")
-        print("User input float: ", self.my_float)
-        hide_crossfield()
-        hide_crossfield_graph()
-        hide_hierarchy()
-        hide_singularities()
         return {'FINISHED'}
     
     def invoke(self, context, event):
         wm = context.window_manager
         # get the currently selected object
         ao = bpy.context.active_object
-        self.my_mr_crossfield = MultiResCrossField(ao)
-        self.my_mr_crossfield.optimize()
-        #self.my_crossfield = CrossField(ao)
-
-        topo_settings = context.scene.lazytopo_settings
-        if topo_settings.my_bool:
-            show_crossfield(self.my_mr_crossfield.cross_points_for_rendering(level=topo_settings.crossfield_level_shown))
-        
-        if topo_settings.show_crossfield_graph:
-            show_crossfield_graph(self.my_mr_crossfield.graph_points_for_rendering(level=topo_settings.crossfield_level_shown))
-
-        if topo_settings.show_singularities:
-            show_singularities(self.my_mr_crossfield.singularity_points_for_rendering())
-        
-        if topo_settings.color_crossfield_hierarchy:
-            show_hierarchy(*self.my_mr_crossfield.merged_faces_for_rendering(level=topo_settings.crossfield_level_shown))
+        topo_globals.active_crossfield = crossfield.MultiResCrossField(ao)
+        update_all_crossfield_drawings(self, context)
 
         return wm.invoke_props_dialog(self)
 
@@ -53,10 +33,7 @@ class TestOperator(bpy.types.Operator):
         row.operator("wm.sub_op")
 
     def cancel(self, context: Context):
-        hide_crossfield()
-        hide_crossfield_graph()
-        hide_hierarchy()
-        hide_singularities()
+        pass
 
 class SubOperator(bpy.types.Operator):
     bl_label = "Sub-Operator"
@@ -75,7 +52,6 @@ class SubOperator(bpy.types.Operator):
         col = layout.column()
         row = col.row()
         row.label(text="I am a nested  operator")
-
 
 def register():
     bpy.utils.register_class(TestOperator)

@@ -1,5 +1,7 @@
 import bpy
 from bpy.types import Scene
+from .drawing import update_all_crossfield_drawings
+
 
 # For more information about Blender Properties, visit:
 # <https://blender.org/api/blender_python_api_2_78a_release/bpy.types.Property.html>
@@ -17,31 +19,42 @@ from bpy.props import BoolProperty
 #
 
 class MySettings(bpy.types.PropertyGroup):
-    my_bool: bpy.props.BoolProperty(
-        name="Debug Drawings",
-        default=True
+    show_crossfield: bpy.props.BoolProperty(
+        name="Show Crossfield",
+        default=True,
+        update=update_all_crossfield_drawings
+    )
+
+    show_constraints: bpy.props.BoolProperty(
+        name="Show Constraints",
+        default=True,
+        update=update_all_crossfield_drawings
     )
 
     show_crossfield_graph: bpy.props.BoolProperty(
         name="Show Crossfield Graph",
-        default=True
+        default=True,
+        update=update_all_crossfield_drawings
     )
 
     show_singularities: bpy.props.BoolProperty(
         name="Show Crossfield Singularities",
-        default=True
+        default=True,
+        update=update_all_crossfield_drawings 
     )
     
     color_crossfield_hierarchy : bpy.props.BoolProperty(
         name="Show Crossfield  Hierarchy",
-        default=True
+        default=True,
+        update=update_all_crossfield_drawings
     )
 
     crossfield_level_shown: bpy.props.IntProperty(
         name="Crossfield Level shown",
         default=0,
         min=0,
-        max=100
+        max=100,
+        update=update_all_crossfield_drawings
     )
 
 # This is where you assign any variables you need in your script. Note that they
