@@ -181,7 +181,7 @@ class MultiResCrossField():
             #     print("Index: ", index)
             #     self.singularities.append((vertex, index))
 
-    def compute_curvature_constraints(self, activation_threshold = 2.5, saturation_threshold = 10, max_weight = 1):
+    def compute_curvature_constraints(self, activation_threshold = 2.5, saturation_threshold = 10, max_weight = 10):
         self.clear_curvature_constraints()
         for face in self.mesh.faces:
             _principal_dir, significance = principal_curvature_dir_with_score(face)
