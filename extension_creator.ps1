@@ -1,0 +1,62 @@
+# path to blender executable
+$blender_path = "C:\Program Files\Blender Foundation\Blender 5.0\"
+
+# all paths to copy
+$base_path = $PSScriptRoot + "\"
+$addon_path = $base_path + "lazytopo\"
+$lean_addon_path = $base_path + "lean_addon\"
+$parent_path = Split-Path -parent $base_path
+$mpfp_wheels_path = $parent_path + "\agplib\wheelhouse\"
+
+# filenames
+$license = "LICENSE"
+$initfile = "__init__.py"
+$manifest = "blender_manifest.toml"
+
+# target path
+$build_path = ($PSScriptRoot + "\LazyTopoBuilds\")
+
+if (!(Test-Path ($build_path))){
+    New-Item -Path $build_path -ItemType Directory
+}
+
+# if it exists, delete old folder
+if (Test-Path ($lean_addon_path)) {
+    Write-Output "Removing old lean addon..."
+    Remove-Item -Recurse ($lean_addon_path)
+}
+# copy everything necesarry for building to a new lean addon folder
+New-Item -Path $lean_addon_path -ItemType Directory
+Copy-Item ($addon_path + "*") -Recurse -Destination ($lean_addon_path)
+# remove first 10 lines of init file (hack to delete the blinfo)
+Get-Content ($addon_path + $initfile) | Select-Object -Skip 11 | Set-Content ($lean_addon_path + $initfile)
+# add license file
+Copy-Item ($base_path + $license) -Destination $lean_addon_path
+# wheels
+New-Item -Path ($lean_addon_path + "wheels\") -ItemType Directory
+Get-ChildItem -Path ($mpfp_wheels_path) -Recurse -File -Filter agplib*.whl | Copy-Item -Destination ($lean_addon_path + "wheels\")
+# automatically add names to manifest
+$wheel_names = Get-ChildItem $($lean_addon_path + "wheels\") -File -Filter agplib*.whl | ForEach-Object {
+    '  "./wheels/' + $_.Name + '",'
+}
+$wheel_list = @()
+$wheel_list += "wheels = ["
+$wheel_list += $wheel_names
+$wheel_list += "]"
+$wheel_list | Add-Content ($lean_addon_path + $manifest)
+if (Test-Path ($lean_addon_path + "__pycache__")){
+    Write-Output "Removing pycache..."
+    Remove-Item ($lean_addon_path + "__pycache__")
+}
+
+# call the blender build command
+Start-Process -NoNewWindow -FilePath ($blender_path + "blender.exe") -ArgumentList "--command extension build --source-dir $lean_addon_path --output-dir $build_path --split-platforms"
+Start-Process -NoNewWindow -FilePath ($blender_path + "blender.exe") -ArgumentList "--command extension build --source-dir $lean_addon_path --output-dir $build_path"
+
+#cleanup after the build processes are finished
+Start-Sleep -Seconds 20 # wait for processes to finish 
+if (Test-Path ($lean_addon_path)) {
+    Write-Output "Removing lean addon..."
+    Remove-Item -Recurse ($lean_addon_path)
+}
+Write-Output "Build process complete."

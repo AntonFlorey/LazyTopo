@@ -1,0 +1,6 @@
+FACE_SPACE_ORIG_ATTR_NAME = "lazytopo_face_space_origin"
+FACE_SPACE_X_ATTR_NAME = "lazytopo_face_space_axis_x"
+FACE_SPACE_Y_ATTR_NAME = "lazytopo_face_space_axis_y"
+CROSSFIELD_ATTR_NAME = "lazytopo_crossfield"
+PRINCIPAL_CURVATURE_ATTR_NAME = "lazytopo_principal_curvature"
+PRINCIPAL_CURVATURE_UNAMBIGUITY_ATTR_NAME = "lazytopo_principal_curvature_unambiguity"

@@ -1,0 +1,18 @@
+schema_version = "1.0.0"
+
+id = "LazyTopo"
+version = "1.0.0"
+name = "LazyTopo"
+tagline = "Retopologize meshes with ease"
+maintainer = "Anton Florey <anton.florey@googlemail.com>"
+type = "add-on"
+website = "https://github.com/AntonFlorey/LazyTopo"
+tags = ["Mesh"]
+blender_version_min = "5.0.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+platforms = ["windows-x64", "linux-x64", "macos-arm64", "macos-x64"]
+
