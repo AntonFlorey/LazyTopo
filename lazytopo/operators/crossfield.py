@@ -3,14 +3,16 @@ import numpy as np
 # blender api
 import bpy
 import bmesh
-from bpy.props import BoolProperty, FloatProperty, IntProperty
+from bpy.props import FloatProperty, IntProperty
 
 # agplib
 import agplib
 
 # addon
-from .utils import ui_helpers, constants
-from .io import attribute_helpers
+from . import all_operators
+from ..utils import ui_helpers, constants
+from ..io import attribute_helpers
+from ..rendering.crossfield_visualization import update_all_crosses
 
 class LAZYTOPO_OT_compute_crossfield(bpy.types.Operator):
     bl_label = "Compute Crossfield"
@@ -94,10 +96,9 @@ class LAZYTOPO_OT_compute_crossfield(bpy.types.Operator):
         crossfield_attribute.data.foreach_set("vector", crossfield.flatten())
 
         bm.free()
+
+        update_all_crosses()
+
         return {'FINISHED'}
 
-def register():
-    bpy.utils.register_class(LAZYTOPO_OT_compute_crossfield)
-
-def unregister():
-    bpy.utils.unregister_class(LAZYTOPO_OT_compute_crossfield)
+all_operators.append(LAZYTOPO_OT_compute_crossfield)

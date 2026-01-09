@@ -19,7 +19,7 @@ else:
     from . import ui
     from . import operators
     from . import properties
-    from .rendering import crossfield_visualization
+    from . import rendering
 
 def register():
     # Properties first!
@@ -29,7 +29,7 @@ def register():
     ui.register()
 
 def unregister():
-    crossfield_visualization.hide_crossfield()
+    rendering.unregister()
     operators.unregister()
     ui.unregister()
     properties.unregister()
