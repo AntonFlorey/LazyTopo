@@ -97,7 +97,7 @@ class LAZYTOPO_OT_compute_crossfield(bpy.types.Operator):
 
         bm.free()
 
-        update_all_crosses()
+        update_all_crosses(self, context)
 
         return {'FINISHED'}
 
