@@ -12,9 +12,14 @@ from bpy.props import FloatProperty
 
 from .rendering import crossfield_visualization
 
-class RenderingSettings(bpy.types.PropertyGroup):
+class CrossfieldSettings(bpy.types.PropertyGroup):
     show_crossfield: BoolProperty(
         name="Show Crossfield",
+        default=True,
+        update=crossfield_visualization.update_all_crosses
+    )
+    show_minmax_curvature: BoolProperty(
+        name="Show MinMax Curvature",
         default=True,
         update=crossfield_visualization.update_all_crosses
     )
@@ -28,10 +33,13 @@ class RenderingSettings(bpy.types.PropertyGroup):
 # This is where you assign any variables you need in your script. Note that they
 # won't always be assigned to the Scene object but it's a good place to start.
 def register():
-    bpy.utils.register_class(RenderingSettings)
-    Scene.lazytopo_settings = bpy.props.PointerProperty(type=RenderingSettings)
+    bpy.utils.register_class(CrossfieldSettings)
+    Scene.lazytopo_crossfield_settings = bpy.props.PointerProperty(type=CrossfieldSettings)
+    bpy.types.WindowManager.layzytopo_in_edge_sketch_mode = BoolProperty(name="Sketching edges with Lazytopo", default=False)
 
 def unregister():
-    bpy.utils.unregister_class(RenderingSettings)
-    del Scene.lazytopo_settings
+    bpy.utils.unregister_class(CrossfieldSettings)
+    del Scene.lazytopo_crossfield_settings
+    bpy.types.WindowManager.lazytopo_in_edge_sketch_mode = False
+    del bpy.types.WindowManager.layzytopo_in_edge_sketch_mode
     

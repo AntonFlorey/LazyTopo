@@ -12,6 +12,7 @@ from gpu_extras.batch import batch_for_shader
 from .rendering_helpers import deactivate_draw_callback, redraw_view_3d
 from ..io import attribute_helpers
 from ..utils.constants import CROSSFIELD_ATTR_NAME, PRINCIPAL_CURVATURE_ATTR_NAME, PRINCIPAL_CURVATURE_UNAMBIGUITY_ATTR_NAME
+from ..utils.contexts import enter_object_mode
 
 _crossfield_drawing_handle = None
 _crossfield_batch = None
@@ -41,80 +42,69 @@ def crosses_drawing_callback(batch : gpu.types.GPUBatch, texture : gpu.types.GPU
     shader.uniform_sampler("image", texture)
     batch.draw(shader)
 
-def compute_cross_batch_data(mesh : bpy.types.Mesh, crosses, index_filter = None):
-    print("called new function!")
-    n_crosses = len(mesh.polygons) if index_filter is None else len(index_filter) 
+def read_face_data_for_crossfield_visualization(mesh : bpy.types.Mesh):
+    n_faces = len(mesh.polygons)
 
-    print("getting mesh data...")
-    start_time = time.time()
+    area_buffer = np.zeros(len(mesh.polygons), np.float32)
+    mesh.polygons.foreach_get("area", area_buffer)
 
-    face_normals = np.asarray([face.normal for face in mesh.polygons])    
-    cross_centers = np.asarray([face.center for face in mesh.polygons]) + (0.01 * face_normals)
-    cross_sizes = np.sqrt(np.asarray([face.area for face in mesh.polygons])) / 3.0
-    if index_filter is not None:
-        face_normals = face_normals[index_filter, :]
-        cross_centers = cross_centers[index_filter, :]
-        cross_sizes = cross_sizes[index_filter]
-        crosses = crosses[index_filter, :]
-    print("done after", time.time() - start_time, "seconds")
+    normals_buffer = np.zeros(n_faces * 3, dtype=np.float32)
+    mesh.polygons.foreach_get("normal", normals_buffer)
 
-    print("rotating crosses by 90 degree...")
-    start_time = time.time()
-    rotated_crosses_90deg = np.cross(face_normals, crosses, axis=1)
-    print("done after", time.time() - start_time, "seconds")
+    centers_buffer = np.zeros(n_faces * 3, dtype=np.float32)
+    mesh.polygons.foreach_get("center", centers_buffer)
 
-    print("computing einsums...")
-    start_time = time.time()
-    upper_right = np.einsum("i,ij->ij", cross_sizes, crosses + rotated_crosses_90deg)
-    upper_left = np.einsum("i,ij->ij", cross_sizes, rotated_crosses_90deg - crosses)
-    print("done after", time.time() - start_time, "seconds")
+    return area_buffer, normals_buffer.reshape((n_faces, 3)), centers_buffer.reshape((n_faces, 3))
 
-    print("computing quads...")
-    start_time = time.time()
+def compute_cross_batch_data(mesh : bpy.types.Mesh, crossfield, face_areas, face_normals, face_centers, cross_size_quotient = 3.0):
+    n_crosses = crossfield.shape[0]
+
+    cross_sizes = np.sqrt(face_areas) / cross_size_quotient
+    cross_centers = face_centers + (0.01 * face_normals)
+    rotated_crosses_90deg = np.cross(face_normals, crossfield, axis=1)
+    upper_right = np.einsum("i,ij->ij", cross_sizes, crossfield + rotated_crosses_90deg)
+    upper_left = np.einsum("i,ij->ij", cross_sizes, rotated_crosses_90deg - crossfield)
     quads_0 = cross_centers + upper_right
     quads_1 = cross_centers + upper_left
     quads_2 = cross_centers - upper_right
     quads_3 = cross_centers - upper_left
-    print("done after", time.time() - start_time, "seconds")
 
-    print("creating the final data...")
-    start_time = time.time()
     vertex_positions = np.concatenate([quads_0, quads_1, quads_2, quads_3], dtype=np.float32)
-    print("positions concatenated after", time.time() - start_time, "seconds")
     uvs = np.repeat([(1, 1), (0, 1), (0, 0), (1, 0)], n_crosses, axis=0).astype(np.float32)
-    print("uvs done after", time.time() - start_time, "seconds")
     f_idx = np.arange(n_crosses, dtype=np.int32)
-    offsets_a = np.array([0, n_crosses, 2 * n_crosses], dtype=np.int32)
-    offsets_b = np.array([0, 2 * n_crosses, 3 * n_crosses], dtype=np.int32)
-    triangle_indices_a = f_idx[:, None] + offsets_a
-    triangle_indices_b = f_idx[:, None] + offsets_b
+    triangle_indices_a = f_idx[:, None] + np.array([0, n_crosses, 2 * n_crosses], dtype=np.int32)
+    triangle_indices_b = f_idx[:, None] + np.array([0, 2 * n_crosses, 3 * n_crosses], dtype=np.int32)
     triangle_indices = np.concatenate([triangle_indices_a, triangle_indices_b], dtype=np.int32)
-    print("triangle indices done after", time.time() - start_time, "seconds")
 
     return vertex_positions, uvs, triangle_indices
 
-def update_crossfield_visualization(self, context : bpy.types.Context):
+def update_crossfield_visualization(self, context : bpy.types.Context, precomputed_face_data = None):
     global _crossfield_drawing_handle
     global _crossfield_batch
     global _crossfield_texture
-    rendering_props = context.scene.lazytopo_settings
+    crossfield_settings = context.scene.lazytopo_crossfield_settings
     ao : bpy.types.Object = context.active_object
     # remove old crossfield drawings
     hide_crossfield()
 
-    if not rendering_props.show_crossfield or ao.type != "MESH":
+    if not crossfield_settings.show_crossfield or ao.type != "MESH":
         return redraw_view_3d(context)
     
-    active_mesh : bpy.types.Mesh = ao.data
-    if not CROSSFIELD_ATTR_NAME in active_mesh.attributes:
-        return redraw_view_3d(context)
-    
-    # load the crossfield
-    crossfield = attribute_helpers.read_numpy_array_from_vector_attribute(active_mesh.attributes, CROSSFIELD_ATTR_NAME, len(active_mesh.polygons))
+    with enter_object_mode(context):
+        active_mesh : bpy.types.Mesh = ao.data
+        if not CROSSFIELD_ATTR_NAME in active_mesh.attributes:
+            return redraw_view_3d(context)
+        
+        # get face data if missing
+        if precomputed_face_data is None:
+            precomputed_face_data = read_face_data_for_crossfield_visualization(active_mesh)
 
-    # compute batch info
-    vertex_positions, uvs, triangle_indices = compute_cross_batch_data(active_mesh, crossfield)
-    n_faces = len(active_mesh.polygons)
+        # load the crossfield
+        crossfield = attribute_helpers.read_numpy_array_from_vector_attribute(active_mesh.attributes, CROSSFIELD_ATTR_NAME, len(active_mesh.polygons))
+
+        # compute batch info
+        vertex_positions, uvs, triangle_indices = compute_cross_batch_data(active_mesh, crossfield, *precomputed_face_data)
+        n_faces = len(active_mesh.polygons)
 
     assert triangle_indices.shape == (2*n_faces, 3), f"Wrong triangle ids shape: {triangle_indices.shape}. Expected: {(2*n_faces, 3)}"
     assert uvs.shape == (4*n_faces, 2), f"Wrong uvs shape: {uvs.shape}. Expected: {(4*n_faces, 2)}"
@@ -131,33 +121,42 @@ def update_crossfield_visualization(self, context : bpy.types.Context):
     _crossfield_drawing_handle = bpy.types.SpaceView3D.draw_handler_add(crosses_drawing_callback, (_crossfield_batch, _crossfield_texture), "WINDOW", "POST_VIEW")
     redraw_view_3d(context)
 
-def update_curvature_visualization(self, context : bpy.types.Context):
+def update_curvature_visualization(self, context : bpy.types.Context, precomputed_face_data):
     global _curvature_drawing_handle
     global _curvature_batch
     global _curvature_texture
-    rendering_props = context.scene.lazytopo_settings
+    crossfield_settings = context.scene.lazytopo_crossfield_settings
     ao : bpy.types.Object = context.active_object
     # remove old crossfield drawings
     hide_curvature()
 
-    if ao.type != "MESH":
+    if not crossfield_settings.show_minmax_curvature or ao.type != "MESH":
         return redraw_view_3d(context)
     
-    active_mesh : bpy.types.Mesh = ao.data
-    if not (PRINCIPAL_CURVATURE_ATTR_NAME in active_mesh.attributes and PRINCIPAL_CURVATURE_UNAMBIGUITY_ATTR_NAME in active_mesh.attributes):
-        return redraw_view_3d(context)
-    
-    # load the directions
-    
-    curvature_unambiguity = attribute_helpers.read_numpy_array_from_float_attribute(active_mesh.attributes, PRINCIPAL_CURVATURE_UNAMBIGUITY_ATTR_NAME, len(active_mesh.polygons))
-    crosses_to_display = [f_idx for f_idx in range(len(active_mesh.polygons)) if curvature_unambiguity[f_idx] >= rendering_props.curvature_threshold]
-    curvature = attribute_helpers.read_numpy_array_from_vector_attribute(active_mesh.attributes, PRINCIPAL_CURVATURE_ATTR_NAME, len(active_mesh.polygons))
-    n_crosses = len(crosses_to_display)
-    if n_crosses == 0:
-        return
+    with enter_object_mode(context):
+        active_mesh : bpy.types.Mesh = ao.data
+        if not (PRINCIPAL_CURVATURE_ATTR_NAME in active_mesh.attributes and PRINCIPAL_CURVATURE_UNAMBIGUITY_ATTR_NAME in active_mesh.attributes):
+            return redraw_view_3d(context)
+        
+        # get face data if missing
+        if precomputed_face_data is None:
+            precomputed_face_data = read_face_data_for_crossfield_visualization(active_mesh)
 
-    # compute batch info
-    vertex_positions, uvs, triangle_indices = compute_cross_batch_data(active_mesh, curvature, crosses_to_display)
+        # load the directions
+        curvature_unambiguity = attribute_helpers.read_numpy_array_from_float_attribute(active_mesh.attributes, PRINCIPAL_CURVATURE_UNAMBIGUITY_ATTR_NAME, len(active_mesh.polygons))
+        id_mask = [f_idx for f_idx in range(len(active_mesh.polygons)) if curvature_unambiguity[f_idx] >= crossfield_settings.curvature_threshold]
+        curvature = attribute_helpers.read_numpy_array_from_vector_attribute(active_mesh.attributes, PRINCIPAL_CURVATURE_ATTR_NAME, len(active_mesh.polygons))
+        n_crosses = len(id_mask)
+        if n_crosses == 0:
+            return
+
+        # compute batch info
+        vertex_positions, uvs, triangle_indices = compute_cross_batch_data(active_mesh, 
+                                                                        curvature[id_mask,:], 
+                                                                        precomputed_face_data[0][id_mask],
+                                                                        precomputed_face_data[1][id_mask,:],
+                                                                        precomputed_face_data[2][id_mask,:],
+                                                                        2.5)
 
     assert triangle_indices.shape == (2*n_crosses, 3), f"Wrong triangle ids shape: {triangle_indices.shape}. Expected: {(2*n_crosses, 3)}"
     assert uvs.shape == (4*n_crosses, 2), f"Wrong uvs shape: {uvs.shape}. Expected: {(4*n_crosses, 2)}"
@@ -175,5 +174,6 @@ def update_curvature_visualization(self, context : bpy.types.Context):
     redraw_view_3d(context)
 
 def update_all_crosses(self, context : bpy.types.Context):
-    update_curvature_visualization(self, context)
-    update_crossfield_visualization(self, context)
+    precomputed_face_data = read_face_data_for_crossfield_visualization(context.active_object.data)
+    update_curvature_visualization(self, context, precomputed_face_data)
+    update_crossfield_visualization(self, context, precomputed_face_data)

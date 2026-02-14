@@ -6,7 +6,7 @@ $base_path = $PSScriptRoot + "\"
 $addon_path = $base_path + "lazytopo\"
 $lean_addon_path = $base_path + "lean_addon\"
 $parent_path = Split-Path -parent $base_path
-$mpfp_wheels_path = $parent_path + "\agplib\wheelhouse\"
+$mpfp_wheels_path = $parent_path + "\agplib\dist\"
 
 # filenames
 $license = "LICENSE"

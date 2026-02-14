@@ -1,3 +1,5 @@
+EPS = 1e-8
+
 FACE_SPACE_ORIG_ATTR_NAME = "lazytopo_face_space_origin"
 FACE_SPACE_X_ATTR_NAME = "lazytopo_face_space_axis_x"
 FACE_SPACE_Y_ATTR_NAME = "lazytopo_face_space_axis_y"

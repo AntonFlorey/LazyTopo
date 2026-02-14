@@ -25,3 +25,19 @@ def textured_triangles_draw_callback(vertex_positions, triangle_indices, uvs, te
     gpu.state.blend_set('NONE')
     gpu.state.depth_test_set('NONE')
     
+def uniform_lines_2D_draw_callback(lines_batch: gpu.types.GPUBatch, color, width=3):
+    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+    prev_line_width = gpu.state.line_width_get()
+    gpu.state.line_width_set(width)
+    shader.bind()   
+    shader.uniform_float("color", color)
+    lines_batch.draw(shader)
+    gpu.state.line_width_set(prev_line_width)
+
+def smooth_color_lines_draw_callback(colored_lines_batch: gpu.types.GPUBatch, width=3.0):
+    shader = gpu.shader.from_builtin("SMOOTH_COLOR")
+    prev_line_width = gpu.state.line_width_get()
+    gpu.state.line_width_set(width)
+    shader.bind()   
+    colored_lines_batch.draw(shader)
+    gpu.state.line_width_set(prev_line_width)

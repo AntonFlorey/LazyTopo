@@ -1,7 +1,6 @@
 import numpy as np
 
 #  blender api
-import bpy
 from bpy.types import AttributeGroupMesh
 
 def create_new_or_overwrite_attribute(attribute_group : AttributeGroupMesh, attribute_name : str, attribute_type : str, attribute_domain : str):
